@@ -104,7 +104,7 @@ def _format_factory():
         """
 
         # Split the string into text segments and format specifications
-        non_formats = iter(FMT_RE.split(fmt))
+        non_formats = FMT_RE.split(fmt)
         format_chunks = FMT_RE.findall(fmt)
  
         fmt_string = (text + preprocess_fmt_spec(fmt_spec)
@@ -113,7 +113,7 @@ def _format_factory():
 
         # After converting the peacock format string into a standard format
         # string, pass the call to str.format
-        return "".join(chain(fmt_string, non_formats)).format(*args)
+        return "".join(fmt_string).format(*args)
 
     return format    
 
