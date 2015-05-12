@@ -186,7 +186,6 @@ class Peacock(Thread):
             handled by the given function. The function will be called with: 
                 * str - the text of the line that the cursor is in
                 * int - the current x position of the cursor in that line 
-            It's return value will not be collected
             E.g.:
             >>> app = Peacock()
             >>> @app.on("ctrl+x")
@@ -226,7 +225,7 @@ class Peacock(Thread):
             # Handlers is a dict of mapping str -> ((str, int) -> None)
             # Call the function with the current line's text, and the 
             # x position in that line
-            self.handlers[key](self._buffer[self._y].getvalue(), self._x)
+            return self.handlers[key](self._buffer[self._y].getvalue(), self._x)
         else:
             # if there is no custom handler associated with the given key
             # and echo mode is on, write the key at the current cursor 
@@ -276,7 +275,7 @@ class Peacock(Thread):
     def move_cursor(self, rows=0, cols=0):
         """
             Moves the cursor the given number of rows, THEN the given number
-            of rows. This does NOT move the cursor to the given coordinate
+            of columns. This does NOT move the cursor to the given coordinate
             (rows, cols), but instead moves relatively
             Any values that are too large are clipped to the max possible
             given the constraints (i.e. length of line, length of buffer)

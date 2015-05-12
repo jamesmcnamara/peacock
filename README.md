@@ -66,5 +66,5 @@ def transpose_line(cur_line, x):
 ## Documentation
 Documentation of the public APIs for each module is included in the README for each module.
 
-* [Peacock](https://github.com/jamesmcnamara/peacock/peacock/README.md)
-* [Format](https://github.com/jamesmcnamara/peacock/format/README.md)
+* [Peacock](https://github.com/jamesmcnamara/peacock/blob/master/PEACOCK.md)
+* [Format](https://github.com/jamesmcnamara/peacock/blob/master/format/README.md)
