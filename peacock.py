@@ -1,4 +1,5 @@
 from io import StringIO
+from itertools import zip_longest
 import sys
 from threading import Thread
 
@@ -81,7 +82,7 @@ class Peacock(Thread):
         # environment (i.e. unable to edit terminal output unrelated to the
         # current activity), we must maintain an internal representation of
         # all the text created and deleted, as well as cursor position 
-        self._buffer = [StringIO()]
+        self._buffer = [""]
         self._x, self._y = 0, 0
         self.start()
 
@@ -97,9 +98,8 @@ class Peacock(Thread):
             "llo\nWorld!"
 
         """
-        after_cursor = '\n'.join(line.getvalue() 
-                                 for line in 
-                                 self._buffer[self._y:])
+        after_cursor = '\n'.join(self._buffer[self._y:])
+
         return after_cursor[self._x:]
 
     def run(self):
@@ -111,7 +111,14 @@ class Peacock(Thread):
         while self.running:
             key = self.keyboard.get_key_or_none()
             if key:
-                self.handle(key)
+                try:
+                    self.handle(key)
+                except AssertionError:
+                    self.stop()
+                    d = locals()
+                    d.update(globals())
+                    from code import interact
+                    interact(local=locals())
     
     def stop(self):
         """
@@ -120,60 +127,6 @@ class Peacock(Thread):
         """
         self.running = False
         self.keyboard.stop()
-
-    ############################################################################
-    ##############################  IO METHODS  ################################
-    ############################################################################
-
-    def write(self, msg):
-        """
-            Writes msg to 'out' at the current cursor position. This is the
-            interface that should be used for all output to 'out' in lieu
-            of 'print', as it updates the internal representation 
-        """
-        self._write_out(msg)
-        self._write_buffer(msg)
-
-
-    def delete(self, chars):
-        """
-            Delete's 'chars' characters from behind the current cursor position
-            and moves all text back
-            :param chars: int - number of characters to delete
-        """
-        # If there are more characters to delete than there are characters on 
-        # the current line, then delete all the characters on the current line
-        # move to the end of the previous line, and continue. However, if we
-        # are already at the origin (_x + _y == 0 implies _x, _y == (0, 0))
-        # ignore the remaining 'delete's
-        while chars > self._x and self._x + self._y:
-            chars -= self._x
-            self.delete(self._x)
-            self.move_cursor_to_eol(-1)
-        # If we aren't at the origin, and the number of characters to delete
-        # is less than _x, delete the previous 'chars' characters
-        if self._x + self._y: 
-            self._delete_out(chars)
-            self._delete_buffer(chars)
-    
-    def reset(self):
-        """
-            Resets this application object and the terminal to the state
-            it was when started
-        """
-        self.clear()
-        self._buffer = [StringIO()]
-        self.cursor = self._x, self._y = 0, 0
-        self.handlers = {}
-        self.register_default_handlers()
-
-    def clear(self):
-        """
-            Deletes all of the text that this app wrote to the terminal and
-            returns the cursor to the origin
-        """
-        #TODO: Implement this method
-        pass
 
     ############################################################################
     ########################### EVENT HANDLER METHODS ##########################
@@ -225,7 +178,7 @@ class Peacock(Thread):
             # Handlers is a dict of mapping str -> ((str, int) -> None)
             # Call the function with the current line's text, and the 
             # x position in that line
-            return self.handlers[key](self._buffer[self._y].getvalue(), self._x)
+            return self.handlers[key](self._buffer[self._y], self._x)
         else:
             # if there is no custom handler associated with the given key
             # and echo mode is on, write the key at the current cursor 
@@ -286,10 +239,10 @@ class Peacock(Thread):
         # New y value after translation. Clipped within the range of 
         # 0 - last-line
         y = min(max(0, self._y + rows), len(self._buffer) - 1)
-        
+         
         # length of the current line, assuming the translation to new 
         # y has already happened
-        curr_line_length = len(self._buffer[y].getvalue())
+        curr_line_length = len(self._buffer[y])
         
         #New x value after translation. Clipped within the range of 
         # 0 - line length
@@ -301,13 +254,31 @@ class Peacock(Thread):
         # Set the internal cursor position to x and y
         self._x, self._y = x, y
     
+    def move_cursor_to(self, x=-1, y=-1):
+        """
+            Moves the cursor to the "absolute" x, y  position 
+            However, values are still clipped between 0 and max 
+        """
+        if y > -1:
+            # If y is non-negative, Set _y to y, clipped between 0 and 
+            # buffer length 
+            self._y = min(y, len(self._buffer) - 1)
+        if x > -1:
+            # If x is non-negative, Set _x to x, clipped between 0 and 
+            # current line length
+            curr_line_len = len(self._buffer[self._y])
+            self._x = min(x, curr_line_len)
+        
+        # Move the terminal cursor to _x
+        self.interact.move_cursor_absolute(self._x, self._y)
+    
     def move_cursor_to_x(self, x=0):
         """
             Moves the cursor to the "absolute" x position in the current line
             However, values are still clipped between 0 and line length 
         """
         # Set _x to x, clipped between 0 and current line length
-        curr_line_len = len(self._buffer[self._y].getvalue())
+        curr_line_len = len(self._buffer[self._y])
         self._x = max(0, min(x, curr_line_len))
 
         # Move the terminal cursor to _x
@@ -335,19 +306,120 @@ class Peacock(Thread):
         self.move_cursor(rows=rows)
         self.move_cursor_to_x(-line_length) 
     
+    def save_cursor(self):
+        x, y = self._x, self._y
+        def restore():
+            self.move_cursor(rows=y - self._y, cols=x - self._x)
+        return restore
+ 
+    def cursors_synced(self):
+        return self._x == self.interact.x and self._y == self.interact.y
+
+    ############################################################################
+    ##############################  IO METHODS  ################################
+    ############################################################################
+   
+    def write(self, msg):
+        assert self.cursors_synced()
+        trailing_output = self.trailing_output
+        output = msg + trailing_output
+        self.interact.write(output)
+        first_line, *rest_lines = output.split("\n")
+        self._buffer[self._y] = self._text_before_cursor() + first_line
+        self._buffer[self._y + 1:] = rest_lines
+        self._cursor_correction_terminal(trailing_output)
+        self._cursor_correction_internal(msg)
+        assert self.cursors_synced()
+
+    def delete(self, chars):
+        assert self.cursors_synced()
+        text_after_cursor = self._text_after_cursor()
+        x, y = self._calculate_ending_position(chars)
+        if y != self._y: 
+            trailing_lines = self._buffer[self._y + 1:]
+            num_trailing_lines = len(self._buffer) - y 
+            num_deleted_lines = self._y - y
+            trailing_output = self.trailing_output
+            self.move_cursor_to(x, y)
+            restore = self.save_cursor()
+            self.delete_trailing()
+            self.write(trailing_output)
+            restore()
+        else:
+            self.move_cursor_to_x(x)
+            self.clear_line(x)
+            restore = self.save_cursor()
+            self.write(text_after_cursor)
+            restore()
+        assert self.cursors_synced()  
+
+    def delete_trailing(self):
+        assert self.cursors_synced()  
+        restore = self.save_cursor()
+        for _ in self._buffer[self._y:]:
+            self.clear_line(self._x)
+            self.move_cursor_to_beginning(1)
+        restore()
+        del self._buffer[self._y + 1:]  
+        assert self.cursors_synced()  
+
+    def clear_line(self, from_x=0):
+        assert self.cursors_synced()  
+        self.move_cursor_to_x(from_x)
+        self.interact.delete_line()
+        self._buffer[self._y] = self._text_before_cursor()
+        assert self.cursors_synced()  
+
+    def reset(self):
+        """
+            Resets this application object and the terminal to the state
+            it was when started
+        """
+        self.clear()
+        self._buffer = [""]
+        # self.interact.move_cursor(-self._y, -self._x)
+        self._x, self._y = 0, 0
+        self.handlers = {}
+        self.register_default_handlers()
+
+    def clear(self):
+        """
+            Deletes all of the text that this app wrote to the terminal and
+            returns the cursor to the origin
+        """
+        #TODO: Implement this method
+        pass
+
 
     ############################################################################
     ############################## PRIVATE METHODS #############################
     ############################################################################
-    def _curr_buf_and_trail_text(self):
+    def _text_after_cursor(self):
         """
-            Returns the current line buffer, and the text after the cursor
-            in the current line 
+            Returns the text after the cursor in the current line 
         """
-        curr_line = self._buffer[self._y]
-        text_after_cursor = curr_line.getvalue()[self._x:]
-        return curr_line, text_after_cursor
+        return self._buffer[self._y][self._x:]
+    
+    def _text_before_cursor(self):
+        """
+            Returns the text before the cursor in the current line 
+        """
+        return self._buffer[self._y][:self._x]
 
+
+    def _cursor_correction_terminal(self, msg):
+        first, *rest = msg.split("\n")
+        self.interact.move_cursor(rows=-len(rest), cols=-len(first))
+
+    def _cursor_correction_internal(self, msg):
+        *lines, last = msg.split("\n")
+        x, y = len(last), len(lines) 
+        if y:
+            self._x = x
+            self._y += y
+        else:
+            self._x += x
+    
     def _write_out(self, msg):
         """
             Writes the given message out, without updating the internal
@@ -361,19 +433,23 @@ class Peacock(Thread):
         else:
             # Otherwise, we must write the message, and then rewrite the
             # trailing output, and restore the cursor position
-            self.interact.write(msg, trailing=self.trailing_output)
-            
+            self.interact.write(msg)
+            restore = self.save_cursor()
+            self.interact.write(self.trailing_output)
+            restore()
+
     def _write_buffer(self, msg):
         """
             Updates the internal representaiton with the given message added
             at current cursor position
             :param msg: str - message to write out
         """
-        curr_line, text_after_cursor = self._curr_buf_and_trail_text()
+        curr_line, text_after_cursor = self._curr_line_and_trail_text()
         if '\n' == msg:
-            # If the message is a new line, move the cursor down one line, and
-            # to the start of the line, then add a new line to the buffer which
-            # holds the text on the current line that was after the buffer 
+            # If the message is a new line, trim the current line at the cursor
+            # move the cursor to the start of the next line, and add a new line 
+            # to the buffer which holds the text after the cursor 
+            curr_line.truncate(self._x)
             self._y += 1
             self._x = 0
             self._buffer.insert(self._y, StringIO(text_after_cursor))
@@ -418,44 +494,54 @@ class Peacock(Thread):
             curr_line.write(msg + text_after_cursor)
             self._x += len(msg)
 
-    def _delete_out(self, chars):
-        """
-            Deletes 'chars' characters from the terminal on the current line
-            Does not update the current representation
-            Requires that 'chars' is less than or equal to _x
-            :param chars: int - number of characters to delete 
-        """
-        _, text_after_cursor = self._curr_buf_and_trail_text()
-        # Move the cursor back 'chars' characters
-        self.interact.move_cursor(cols=-chars)
+    def _calculate_ending_position(self, chars):
+        x, y = self._x, self._y
+        while chars > x and self._y > 0:
+            chars -= x + 1
+            y -= 1
+            x = len(self._buffer[y])
+        return max(0, x - chars), max(0, y)
 
-        # Delete from current position onwards
-        self.interact.delete_line()
 
-        # Write the trailing text of this line, and blank spaces to overwrite
-        self.interact.write(text_after_cursor + ' ' * chars)
+    # def _delete_out(self, chars):
+    #     """
+    #         Deletes 'chars' characters from the terminal on the current line
+    #         Does not update the current representation
+    #         Requires that 'chars' is less than or equal to _x
+    #         :param chars: int - number of characters to delete 
+    #     """
+    #     _, text_after_cursor = self._curr_line_and_trail_text()
+    #     # Move the cursor back 'chars' characters
+    #     self.interact.move_cursor(cols=-chars)
 
-        # Move the terminal cursor back
-        self.interact.move_cursor_to_x(self._x - chars)
-            
+    #     # Delete from current position onwards
+    #     self.interact.delete_line()
 
-    def _delete_buffer(self, chars):
-        """
-            Deletes 'chars' characters from the current line in the internal
-            representation and updates cursor position
-            Requires that 'chars' is less than or equal to _x
-            NOTE: the internal representation does not maintain the add'l 
-            spaces that the terminal has written in
-            :param chars: int - number of characters to delete 
-        """
-        curr_line, text_after_cursor = self._curr_buf_and_trail_text()
-        curr_line_len = len(curr_line.getvalue())
-        
-        # Move to the new _x position, write the trailing text of the line in,
-        # then delete everything at the end
-        curr_line.seek(self._x - chars)
-        curr_line.write(text_after_cursor)
-        curr_line.truncate(curr_line_len - chars)
+    #     # Write the trailing text of this line, and blank spaces to overwrite
+    #     #self.interact.write(text_after_cursor + ' ' * chars)
 
-        # Update _x
-        self._x -= chars
+    #     # Move the terminal cursor back
+    #     #self.interact.move_cursor_to_x(self._x - chars)
+    #         
+
+    # def _delete_buffer(self, chars):
+    #     """
+    #         Deletes 'chars' characters from the current line in the internal
+    #         representation and updates cursor position
+    #         Requires that 'chars' is less than or equal to _x
+    #         NOTE: the internal representation does not maintain the add'l 
+    #         spaces that the terminal has written in
+    #         :param chars: int - number of characters to delete 
+    #     """
+    #     curr_line, text_after_cursor = self._curr_line_and_trail_text()
+    #     curr_line_len = len(curr_line.getvalue())
+    #     
+    #     # Move to the new _x position, write the trailing text of the line in,
+    #     # then delete everything at the end
+    #     curr_line.truncate(self._x - chars)
+    #     # curr_line.seek(self._x - chars)
+    #     # curr_line.write(text_after_cursor)
+    #     # curr_line.truncate(curr_line_len - chars)
+
+    #     # Update _x
+    #     self._x -= chars

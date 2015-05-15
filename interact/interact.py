@@ -1,4 +1,6 @@
 from abc import ABCMeta, abstractmethod
+from io import StringIO
+from itertools import count
 
 class Interact:
     """
@@ -25,7 +27,7 @@ class Interact:
             However, values are still clipped between 0 and line length 
         """
         line_length = line_length or self.line_length
-        
+         
         # move it to the beginning of the line, then move it forward x
         self.move_cursor(cols=-line_length)
         self.move_cursor(cols=x)
@@ -40,13 +42,14 @@ class Interact:
         self.move_cursor(rows=rows)
         self.move_cursor_to_x(self.line_length)
 
-    def move_cursor_to_beginning(self, x=0, line_length=None):
+    def move_cursor_to_beginning(self, rows=0, line_length=None):
         """
             Moves the cursor to the beginning of the line that is 'rows' 
             displaced from the current position. Still capped between 0 length 
             of buffer. So app.move_cursor_to_beginning(-3) moves it to beginning
             of the 3 lines before the current position
         """
+        self.move_cursor(rows=rows)
         self.move_cursor_to_x(-self.line_length) 
 
     @abstractmethod
@@ -73,33 +76,19 @@ class InteractANSIMac(Interact):
         
         # Default ANSI escape sequence is Esc+[
         self.escape_seq = "\033["
+        self.x, self.y = 0, 0
 
-    def write(self, msg, trailing=''):
-        """
-            Writes the given message out to the terminal, plus all trailing
-            text, and restores the cursor to be just after the message
-            :param msg: str - the message to write to the terminal
-            :param trailing: str - the trailing text after the cursor to write
-                to emulate inserts
-        """
-        self.out.write(msg)
-        self.save_cursor()
-        self.out.write(trailing)
-        self.restore_cursor()
-        self.out.flush()
-
-    def save_cursor(self):
-        """
-            Save the cursor position
-        """
-        self.out.write("{}s".format(self.escape_seq))
-
-    def restore_cursor(self):
-        """
-            Restore the cursor position to where ever it was last fozen, 
-            with save cursor
-        """
-        self.out.write("{}u".format(self.escape_seq))
+    def write(self, msg):
+        *lines, last = msg.split("\n")
+        for line in lines:
+            self.delete_line()
+            self.out.write(line + "\n")
+            self.y += 1
+            self.x = 0
+        self.delete_line()
+        self.out.write(last)
+        self.x += len(last)
+    
     
     def move_cursor(self, rows=0, cols=0):
         """
@@ -115,9 +104,11 @@ class InteractANSIMac(Interact):
         if rows:
             self.out.write("{}{}{}".format(self.escape_seq, abs(rows), 
                                            'B' if rows > 0 else 'A'))
+            self.y += rows
         if cols:
             self.out.write("{}{}{}".format(self.escape_seq, abs(cols), 
                                            'C' if cols > 0 else 'D'))
+            self.x += cols
         self.out.flush()
 
     def move_cursor_absolute(self, x=0, y=0):
@@ -127,6 +118,7 @@ class InteractANSIMac(Interact):
             :param y: int - y coordinate
         """
         self.out.write("{}{};{}k".format(self.escape_seq, x, y))
+        self.x, self.y = x, y
         self.out.flush()
 
     def delete_display(self):
@@ -137,12 +129,13 @@ class InteractANSIMac(Interact):
         self.out.write("{}2J".format(self.escape_seq))
         self.out.flush()
     
-    def delete_line(self):
+    def delete_line(self, flush=True):
         """
             Deletes the text after the cursor to the end of the line 
         """
         self.out.write("{}K".format(self.escape_seq))
-        self.out.flush()
+        if flush:
+            self.out.flush()
 
 class _BufferInteract(Interact):
     """
@@ -158,7 +151,7 @@ class _BufferInteract(Interact):
     def move_cursor(self, rows=0, cols=0):
         """
             Moves the cursor the given number of rows, THEN the given number
-            of rows. This does NOT move the cursor to the given coordinate
+            of cols. This does NOT move the cursor to the given coordinate
             (rows, cols), but instead moves relatively
             Any values that are too large are clipped to the max possible
             given the constraints (i.e. length of line, length of buffer)
@@ -188,14 +181,15 @@ class _BufferInteract(Interact):
         """
             Deletes the text after the cursor to the end of the line 
         """
-        t_o = self.trailing_output
-        eol = t_o.index('\n') if '\n' in t_o else len(t_o)
+        s = "\n".join(line if i != self.y else line[:self.x] 
+                       for i, line in enumerate(self.array))
         
         # Write spaces until the new line
-        self.out.seek(self.off)
-        self.out.write(' ' * eol)
+        self.out.seek(0)
+        self.out.write(s)
+        self.out.truncate(len(s))
     
-    def write(self, msg, trailing=''):
+    def write(self, msg):
         """
             Writes the given message out to the terminal buffer, plus moves
             all trailing text, and restores the cursor to be just after the 
@@ -204,27 +198,17 @@ class _BufferInteract(Interact):
             :param trailing: str - the trailing text after the cursor to write
                 to emulate inserts
         """
-        self.out.seek(self.off)
-        self.out.write(msg)
-        
-        # update cursor
-        if "\n" in msg:
-            # If there is a new line in the message, y increaeses by the number
-            # of new lines, and x goes to the lenght of the line
-            arr = msg.split("\n")
-            y = self.y +  len(arr) - 1  
-            x = len(arr[-1])
-        else:
-            # Else, x simply increases by the length of the line, and y is
-            # unchanged
-            x = self.x + len(msg)
-            y = self.y
 
-        # Set x and y, then write the trailing text, then restore the cursor
-        self.x, self.y = x, y
-        if trailing:
-            self.write(trailing)
-        self.x, self.y = x, y
+        self.out.truncate(self.off)
+        *lines, last = msg.split("\n") 
+        for line in lines:
+            self.delete_line()
+            self.out.write(line + "\n")
+            self.y += 1
+            self.x = 0
+        self.delete_line()
+        self.out.write(last)
+        self.x += len(last)
     
     @property
     def array(self):
