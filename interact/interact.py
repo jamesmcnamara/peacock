@@ -145,46 +145,113 @@ class Interact:
     ##############################  IO METHODS  ################################
     ############################################################################
     def write(self, msg):
-        
+        """
+            Interface for writing messages to the `out` file descriptor. This 
+            class (attempts to) maintain a sychronized buffer of what has been
+            written out, so that it can simulate text insertion
+            :param msg: str -- the message to write out
+        """
+        # The message that we're ACTUALLY going to write is the given message 
+        # plus all the text that was after the cursor, which must be shifted
         trailing_output = self.trailing_output()
         output = msg + trailing_output
+        
+        ########################## WRITE TO BUFFER ############################
+        # We will append the text before the cursor on this line to the text 
+        # in the first line of the output, and that becomes the new current 
+        # line in the buffer, and the rest of lines become the contents of the
+        # rest of the buffer (remember, this contains all of the text that was
+        # after the cursor in the first place)
         first_line, *rest_lines = output.split("\n")
         self._buffer[self.y] = self.text_before_cursor() + first_line
         self._buffer[self.y + 1:] = rest_lines
         
+        
+        ############################ WRITE TO OUT #############################
+        # Next, we write the message to the `out` fd. Note that if any of the 
+        # lines in the new buffer are shorter than the line that was previously 
+        # there, the difference will remain on the line. Thus we must first 
+        # delete the line, THEN write the new one
         *lines, last = output.split("\n")
         for line in lines:
             self._delete_line_out()
             self.out.write(line + "\n")
             self.y += 1
             self.x = 0
+
+        # Delete the last line, and write out the new one. If there was no 
+        # newline character in the text, this is the only code that would be
+        # run, and it will still work
         self._delete_line_out()
         self.out.write(last)
+
+        # x increases by the length of the last line
         self.x += len(last)
 
+        ############################ CURSOR CORRECT ###########################
+        # Since we meshed the message and trailing output together, we weren't
+        # able to use our save/restore cursor trick. Instead, the cursor is 
+        # currently at EOF. So we must first move it up the number of lines in 
+        # in trailing output - 1, and from the end of the line, we move 
+        # backwards the number of characters in the first line of the trailing
+        # output. This will leave us at the last character of the inserted text
         first, *rest = trailing_output.split("\n")
         self.move_cursor_to_eol(-len(rest))
         self.move_cursor(cols=-len(first))
 
     def delete(self, chars):
-        text_after_cursor = self.text_after_cursor()
+        """
+            Deletes `chars` characters from the `out` text, by moving the 
+            cursor back `chars` characters (taking into account line lengths)
+            and then writing what WAS the trailing text from that point, 
+            effectively erasing the text in-between
+            :param chars: int -- the number of chars to delete
+        """
+        # Absolute X, Y coordinates in the text where the cursor will be after
+        # deleting `chars` characters
         x, y = self._calculate_ending_position(chars)
+        
+        # Current trailing text, which will be written at x, y
         trailing_output = self.trailing_output()
         self.move_cursor_to(x, y)
+
+        # Save the location at x, y before we write
         restore = self.save_cursor()
+
+        # Delete all text from x, y down, and then write the trailing text
         self.delete_trailing()
         self.write(trailing_output)
+        
+        # Restore the cursor position to x, y
         restore()
 
     def delete_trailing(self):
+        """
+            Deletes all trailing text from the cursor location to EOF
+            Relies on delete_line 
+        """
+        # Save cursor location
         restore = self.save_cursor()
         for _ in self._buffer[self.y:]:
+            # For each line in the buffer, delete the line, and move the next
             self.delete_line()
             self.move_cursor_to_beginning(1)
+
+        # restore the cursor position
         restore()
+        
+        # Remove the trailing empties from the buffer. Once a user has deleted
+        # line, they shouldn't be able to enter it without writing a newline
         del self._buffer[self.y + 1:]  
     
     def delete_line(self):
+        """
+            Deletes all the text in the current line after the cursor from 
+            the buffer, then calls the private method _delete_line_out to 
+            delete the line from `out`
+            NOTE: this method is not implemented. Each subclass must implement
+            it for the file type they are targetting
+        """
         self._buffer[self.y] = self.text_before_cursor()
         self._delete_line_out()
 
@@ -218,11 +285,20 @@ class Interact:
         return self._buffer[self.y][:self.x]
 
     def _calculate_ending_position(self, chars):
+        """
+            Calculates the X, Y location in the text of the cursor if `chars`
+            characters were deleted from the current cursor location. Takes 
+            into account the length of each intermediary line
+        """
         x, y = self.x, self.y
         while chars > x and y > 0:
+            # So long as the number of characters to delete is longer than 
+            # the current line, and we aren't at the first line of text yet
+            # decrement chars by the number of characters in the current line
             chars -= x + 1
             y -= 1
             x = len(self._buffer[y])
+        # Return the x, y coordinates calculated, but clamped at 0, 0
         return max(0, x - chars), max(0, y)
 
 class InteractANSIMac(Interact):
@@ -279,6 +355,9 @@ class InteractANSIMac(Interact):
         self._delete_line_out()
         
     def _delete_line_out(self):
+        """
+            Deletes the text after the cursor to the end of the line 
+        """
         self.out.write("{}K".format(self.escape_seq))
         self.out.flush()
 
@@ -320,6 +399,9 @@ class _BufferInteract(Interact):
         self._delete_line_out()
 
     def _delete_line_out(self):
+        """
+            Deletes the text after the cursor to the end of the line 
+        """
         self.out.truncate(0)
         self.out.seek(0)
         self.out.write("\n".join(line if i != self.y else line[:self.x] 

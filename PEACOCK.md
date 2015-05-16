@@ -18,6 +18,8 @@ Constructs a Peacock object, and starts it running
 | __out__ | _file_ |  What file descriptor to interact with. Shoul be a TTY or PTY that is connected to a terminal-emulator that supports ANSI control sequences
 | __debug__ | _bool_ |  Doesn't actually do anything
 
+## IO Methods
+
 ### write(_msg_)
 Writes msg to 'out' at the current cursor position. This is the
 interface that should be used for all output to 'out' in lieu
@@ -37,6 +39,8 @@ Delete's `chars` characters from behind the current cursor position and moves al
 ### reset()
 Revert's the app, terminal and buffer back to its initial state.
 
+
+## Event Handler Methods
 
 ### on(_key_)
 Add "on-key" handlers to this app. Called with a key, (soon to support multi-key sequences), and returns a decorator that consumes a function, and binds the original key sequence to be handled by the given function. The function will be called with: 
@@ -63,6 +67,12 @@ Executes whatever action is associated with the given key. This can be used to t
 -----------|------|--------
  __key__ | _str_ | The key to trigger.
  
+## Cursor Methods
+
+### save_cursor()
+Returns a function which when called, returns the cursor to the _(x, y)_ position it was at when the function was created. The returned function can be
+used as many times as you like.
+ 
 ### move\_cursor(_rows=0, cols=0_)
  Moves the cursor the given number of rows, THEN the given number of columns. This does NOT move the cursor to the given coordinate (rows, cols), but instead moves relatively. Any values that are too large or too small are clipped to the max possible given the constraints (i.e. x within 0 to length of line, y within 0 to length of buffer).
 
@@ -71,6 +81,13 @@ Executes whatever action is associated with the given key. This can be used to t
  __rows__ | _int_ | The number of rows to offset the current cursor position by. This value may be negative to move the cursor upwards.
  __cols__ | _int_ | The number of columns to offset the current cursor position by. This value may be negative to move the cursor backwards.
 
+### move\_cursor\_to(_x=0, y=0_)
+Moves the cursor to the "absolute" x, y position. However, values are still clipped between 0 and line length for _x_, and 0 and buffer length for _y_.
+
+ Parameter | Type | Purpose
+-----------|------|--------
+ __x__ | _int_ | The x-coordinate to move the cursor to. Any value larger than the length of the _y_ th line will move the cursor to EOL, and any negative values will move it to 0. 
+ __y__ | _int_ | The y-coordinate to move the cursor to. Any value larger than the length of the buffer will move the cursor to EOF, and any negative values will move it to 0. 
 ### move\_cursor\_to\_x(_x=0_)
 Moves the cursor to the "absolute" x position in the current line. However, values are still clipped between 0 and line length.
 

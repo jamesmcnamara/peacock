@@ -262,20 +262,29 @@ class Peacock(Thread):
     ############################################################################
     @property
     def _x(self):
+        # The current cursor X position, should only be used internally as a 
+        # convenience
         return self.interact.x
 
     @_x.setter
     def _x(self, value):
+        # Set the current cursor X position, should only be used internally as
+        # a convenience, please favor move_cursor()
         self.interact.x = value
     
     @property
     def _y(self):
+        # The current cursor Y position, should only be used internally as a 
+        # convenience
         return self.interact.y
 
     @_y.setter
     def _y(self, value):
+        # Set the current cursor Y position, should only be used internally as
+        # convenience, please favor move_cursor()
         self.interact.y = value
 
     @property
     def _buffer(self):
+        # Allows you to access interacts file buffer
         return self.interact._buffer
