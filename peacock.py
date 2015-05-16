@@ -1,5 +1,4 @@
 from io import StringIO
-from itertools import zip_longest
 import sys
 from threading import Thread
 
@@ -84,7 +83,7 @@ class Peacock(Thread):
         self.move_cursor_to_x = self.interact.move_cursor_to_x
         self.move_cursor_to_eol = self.interact.move_cursor_to_eol
         self.move_cursor_to_beginning = self.interact.move_cursor_to_beginning
-        self.save_cursor = self.interact.move_cursor
+        self.save_cursor = self.interact.save_cursor
 
         # Let's GOOOO
         self.start()

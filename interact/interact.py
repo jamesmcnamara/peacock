@@ -18,7 +18,6 @@ class Interact:
         self.keyboard = keyboard
         self.out = out
         self.line_length = line_length
-        self.x, self.y = 0, 0
     
         # Private Variables
         # Because the 'out' fd is a TTY, we can't read from it. In order to 
@@ -27,6 +26,7 @@ class Interact:
         # current activity), we must maintain an internal representation of
         # all the text created and deleted, as well as cursor position 
         self._buffer = [""]
+        self.x, self.y = 0, 0
 
     def reset(self):
         """
@@ -104,8 +104,7 @@ class Interact:
             So app.move_cursor_to_eol(-3) moves it to eol of the 3 lines 
             before the current position
         """
-        self.move_cursor(rows=rows)
-        self.move_cursor_to_x(self.line_length)
+        self.move_cursor(rows=rows, cols=self.line_length)
 
     def move_cursor_to_beginning(self, rows=0, line_length=None):
         """
@@ -114,8 +113,7 @@ class Interact:
             of buffer. So app.move_cursor_to_beginning(-3) moves it to beginning
             of the 3 lines before the current position
         """
-        self.move_cursor(rows=rows)
-        self.move_cursor_to_x(-self.line_length) 
+        self.move_cursor(rows=rows, cols=-self.line_length)
 
     def save_cursor(self):
         """
@@ -415,6 +413,6 @@ class _BufferInteract(Interact):
     @property
     def off(self):
         # The current offset is given by x + number of characters in each line
-        # after the curret line plus 1 to account for the new line
+        # after the curret line plus 1 to account for the new line character
         return self.x + sum(len(line) + 1 for line in self._buffer[:self.y])
 
