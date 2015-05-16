@@ -1,14 +1,14 @@
 # Peacock
-						             __/o'V'o\__
-						          __/o \  :  / o\__
-						         /o `.  \ : /  .' o\
-						        _\    '. /"\ .'    /_
-						       /o `-._  '\v/'  _.-` o\
-						       \_     `-./ \.-`     _/
-						      /o ``---._/   \_.---'' o\
-						      \_________\   /_________/
-						                '\_/'
-						                _|_|_
+								             __/o'V'o\__
+								          __/o \  :  / o\__
+								         /o `.  \ : /  .' o\
+								        _\    '. /"\ .'    /_
+								       /o `-._  '\v/'  _.-` o\
+								       \_     `-./ \.-`     _/
+								      /o ``---._/   \_.---'' o\
+								      \_________\   /_________/
+								                '\_/'
+								                _|_|_
 
 Peacock is a micro-framework for terminal applications, written in Python3. Through the use of its classes and decorators, it allows you to quickly and easily build terminal apps with color and rich interactivity, such as
 
