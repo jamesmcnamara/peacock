@@ -226,6 +226,14 @@ def test_move_cursor_to_beginning(buf):
     buf.move_cursor_to_beginning(-1)
     assert (buf.x, buf.y) == (0, 0)
 
+def test_move_cursor_to_eof(long_buf, buf):
+    assert (buf.x, buf.y) == (2, 1)
+    buf.move_cursor_to_eof()
+    assert (buf.x, buf.y) == (5, 1)
+    assert (long_buf.x, long_buf.y) == (3, 3)
+    long_buf.move_cursor_to_eof()
+    assert (long_buf.x, long_buf.y) == (6, 4)
+
 def test_save_cursor(buf):
     assert (buf.x, buf.y) == (2, 1)
     restore = buf.save_cursor()

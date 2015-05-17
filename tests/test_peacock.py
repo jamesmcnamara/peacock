@@ -2,10 +2,8 @@ from io import StringIO
 from mock import patch
 import pytest
 
-from peacock import Peacock, interact, keyboard, format
+from peacock import Peacock, interact, keyboard, format, Mode
 from peacock.interact import _BufferInteract
-# from peacock.peacock import format
-# from peacock.interact.interact import _BufferInteract
 
 def test_format():
     assert format("No peacocks here") == "No peacocks here"
