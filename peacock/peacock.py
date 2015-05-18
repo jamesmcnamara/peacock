@@ -2,8 +2,8 @@ from io import StringIO
 import sys
 from threading import Thread
 
-from peacock.interact import MacKeyboard, InteractANSIMac, _BufferInteract 
-
+from .mode import Mode, ModeError
+from peacock.interact import MacKeyboard, InteractANSIMac
 
 class Peacock(Thread):
     """
@@ -33,7 +33,7 @@ class Peacock(Thread):
     dir_to_cart = {'up': (-1,0), 'down': (1, 0), 
                    'left': (0, -1), 'right': (0, 1)}
     
-    def __init__(self, echo=True, running=True, insert=True, line_length=120, 
+    def __init__(self, echo=True, running=True, insert=True, line_length=120,
                  out=sys.stdout, debug=False):
         """
             Instantiates a Peacock app and begin's it running in the its own
@@ -67,14 +67,24 @@ class Peacock(Thread):
         self.keyboard = MacKeyboard()
         self.interact = InteractANSIMac(self.keyboard, out, line_length)
         
+        # Additionally, the app and users can create modes, in which keys have
+        # different behaviors. These bindings can be added by adding the `mode`
+        # keyword to on, and providing either a string name, or subclassing
+        # `Mode` for more complex behavior, and providing an instance of the 
+        # class
+        # By default all apps have two modes, insert and read
+        self.modes = {}
+        self.mode = None
+        self.configure_default_modes()
+
+        
         # Users can register key handlers to give app specific key-bindings
         # Certain keys (delete, arrow keys) have default behaviors that 
         # users would expect, but they can easily be overriden with the
         # 'on' decorator
-        # handlers: str -> ((str, int) -> None)
-        self.handlers = {}
         self.register_default_handlers()
         
+
         ############################## CURSOR METHODS #########################
         # To ease use, a number of utility methods are wrapped here to 
         # interface with the interact library
@@ -112,7 +122,7 @@ class Peacock(Thread):
             key = self.keyboard.get_key_or_none()
             if key:
                 self.handle(key)
-    
+
     def stop(self):
         """
             Stops the application from running on the next iteration of the 
@@ -124,57 +134,56 @@ class Peacock(Thread):
     ############################################################################
     ########################### EVENT HANDLER METHODS ##########################
     ############################################################################
-    def on(self, key):
+    def on(self, key, mode="insert"):
         """
-            Add "on-key" handlers to this app. Called with a key, (soon to
-            support multi-key sequences), and returns a decorator that 
-            consumes a function, and binds the original key sequence to be
-            handled by the given function. The function will be called with: 
+            Add "on-key" handlers to the given mode. Raises `ModeException` if 
+            the specified mode has not been registered with the app. 
+            Called with a key, (soon to support multi-key sequences), and 
+            returns a decorator that consumes a function, and binds the original 
+            key sequence to be handled by the given function in the given mode. 
+            By default, the function will be called with: 
+                * Peacock - a reference to the currently running app
                 * str - the text of the line that the cursor is in
                 * int - the current x position of the cursor in that line 
+            However, by subclassing `Mode` and overriding the `handle` method, 
+            the key-handler function signatures can be arbitrarily customized
             E.g.:
             >>> app = Peacock()
             >>> @app.on("ctrl+x")
-            ... def delete_to_beginning(cur_line, x):
-            ...     # Deletes the text before the cursor, 
-            ...     # and returns the chars deleted
+            ... def delete_to_beginning(app, cur_line, x):
+            ...     # Deletes the text before the cursor when in insert mode 
             ...     app.delete(x)
         """
         # TODO: add multi-key sequences
-
-        # Validate that it is in fact a valid key sequence
-        if key not in self.keyboard.keys.values():
-            raise ValueError("{} not a valid key".format(key))
-
-        def inst_decorator(f):
-            """
-                Decorator closure that binds the key-sequence specified in
-                the outer scope to the given function
-                :param f: (str, int) -> None - void function which consumes the 
-                    current line text and cursor x-position 
-                :return: f - unaltered
-            """
-            self.handlers[key] = f 
-            return f 
-        return inst_decorator
-
+        try:
+            return self.modes[mode].on(key)
+        except KeyError:
+            raise ModeError("{} has not been added yet. All modes must be "
+                            "added via Peacock.add_mode() before they can be "
+                            "used.".format(mode))
+    
     def handle(self, key):
         """
             Executes whatever action is associated with the given key
             :param key: str - a key code or sequence (non-None)
         """
         # TODO: add multi-key sequences
-
-        # If there is a custom behavior associated with the given key,
-        # execute that
-        if self.handlers.get(key, None):
-            # Handlers is a dict of mapping str -> ((str, int) -> None)
-            # Call the function with the current line's text, and the 
-            # x position in that line
-            return self.handlers[key](self._buffer[self._y], self._x)
-        else:
+        mode = self.mode
+        while mode:
+            # If there is a custom behavior associated with the given key
+            # in the current mode, execute it
+            if mode.handlers.get(key, None):
+                # Handlers is a dict of mapping:
+                #   str -> ((Peacock, str, int) -> None)
+                # Call the function with the current app, the current line's text, 
+                # and the x position in that line
+                return mode.handle(key, app=self)
+            else:
+                # Else, escalate to the parent mode, if any, and recurse 
+                mode = mode.parent
             # if there is no custom handler associated with the given key
-            # and echo mode is on, write the key at the current cursor 
+            # in any mode on this path to the root node, and echo is on, 
+            # write the key at the current cursor 
             # position
             if self.echo:
                 self.write(key)
@@ -186,7 +195,7 @@ class Peacock(Thread):
             the delete key to remove a character behind the cursor, and enter
             to insert a newline a the cursor
         """
-
+        # Insert Mode Handlers
         def arrow_handler_factory(rows, cols):
             """
                 Returns a function that moves the cursor the given coordinates  
@@ -194,8 +203,8 @@ class Peacock(Thread):
                 :param cols: int - number of cols to move for the given direc
                 :return: (str, int) -> None
             """
-            def arrow_handler(*args):
-                self.interact.move_cursor(rows, cols)
+            def arrow_handler(app, *args):
+                app.interact.move_cursor(rows, cols)
             return arrow_handler
         
         # For each of the directions and associated movement coordinates,
@@ -206,14 +215,52 @@ class Peacock(Thread):
             self.on(direc)(arrow_handler_factory(rows, cols))
 
         @self.on("delete") 
-        def delete_handler(*args):
+        def delete_handler(app, *args):
             # On backspace, delete one character 
-            self.interact.delete(1)
+            app.interact.delete(1)
 
         @self.on("enter")
-        def enter_handler(curr_line, x):
+        def enter_handler(app, *args):
             # On enter, write a new line 
-            self.write("\n")
+            app.write("\n")
+
+        # Read Mode Handlers
+        for arrow in ("up", "down"):
+            self.on(arrow, mode="read")(lambda *args: None)
+
+    ############################################################################
+    ############################  MODE METHODS   ###############################
+    ############################################################################
+   
+    def add_mode(self, mode, name=None):
+        """
+            Adds the given mode to this app
+            :param mode: Mode - The mode to add
+            :param name: str - the name to associate the given mode to
+        """
+        self.modes[name or mode.name] = mode
+   
+    def set_mode(self, name):
+        """
+            Tries to activate the mode with the associated name
+            :param name: str - the name of the mode to activate
+        """
+        try:
+            self.mode = self.modes[name]
+        except KeyError:
+            raise ModeError("Set Mode: {} is not a registered mode. Please add "
+                            "it first with Peacock.add_mode".format(name))
+
+    def configure_default_modes(self):
+        """
+            Sets up the default modes for a Peacock applications, specifically
+            "Insert" mode, which allows the user to insert text, and "Read"
+            mode, which allows an app to read text from a user
+            Finally, activates "Insert"
+        """
+        for mode in ("insert", "read"):
+            self.modes[mode] = Mode(mode, self.keyboard)
+        self.mode = self.modes["insert"] 
 
     ############################################################################
     #############################   IO METHODS   ###############################
@@ -244,7 +291,8 @@ class Peacock(Thread):
         """
         self.clear()
         self.interact.reset()
-        self.handlers = {}
+        self.modes = {}
+        self.configure_default_modes()
         self.register_default_handlers()
 
     def clear(self):

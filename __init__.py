@@ -1,6 +1,6 @@
-from .peacock import Peacock
-from .format.format import _format_factory
+from .peacock.peacock import Peacock
+from .peacock.mode import Mode, ModeError
+from .format import format 
 from .interact import interact, keyboard
 # Initialize the format closure
 
-format = _format_factory()

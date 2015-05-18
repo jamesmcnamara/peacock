@@ -115,6 +115,12 @@ class Interact:
         """
         self.move_cursor(rows=rows, cols=-self.line_length)
 
+    def move_cursor_to_eof(self):
+        """
+            Moves the cursor to the end of the file.
+        """
+        self.move_cursor(rows=len(self._buffer), cols=len(self._buffer[-1]))
+
     def save_cursor(self):
         """
             Save the current location of the cursor, and returns a closure
