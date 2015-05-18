@@ -65,7 +65,7 @@ class Peacock(Thread):
         # A keyboard interface for the current app. I believe the 'MacKeyboard'
         # interface will work for Unix systems as well, but it must be tested
         self.keyboard = MacKeyboard()
-        self.interact = InteractANSIMac(None, out, line_length)
+        self.interact = InteractANSIMac(self.keyboard, out, line_length)
         
         # Additionally, the app and users can create modes, in which keys have
         # different behaviors. These bindings can be added by adding the `mode`
