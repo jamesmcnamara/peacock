@@ -2,9 +2,45 @@
 ## _class_ Peacock(Thread)
 
 The Peacock object is the public interface to this framework, and
-has a Flask-esque interface. Once created, it takes over writing and 
-key handling from the specified TTY, so its `read()` and `write()` methods
+has a [Flask](flask.pocoo.org)-esque interface. 
+
+The Peacock object has an event loop where it listens for key events, and fires attached events. Additionally, the object has IO methods that allow you to create rich interactivity. Once created, it takes over writing and key handling from the specified TTY, so its `read()` and `write()` methods
 should be used in their place.
+
+Peacock apps are "moded" applications (users of applications like Vim will find this familiar). Key-handlers can be all attached to a single mode, or the app can create seperate modes, in which the same key sequences perform different actions. See [Modes](#_class_ Mode) for more information.
+
+Perhaps an example will be more illustrative.
+
+```python
+""" Extremely simple Vim clone"""
+app = Peacock()
+
+# All apps by default have an "insert" and a "read" mode, with the 
+# default being "insert"
+normal = Mode("normal", keyboard=app.keyboard)
+
+app.add_mode(normal)
+
+# When no mode is specified, key bindings are attached to "insert" mode
+@app.on("esc")
+def enter_normal(app, *args):
+	app.set_mode("normal")
+	
+# Modes also support the on decorator, and since they contain no reference
+# to a particular app, can be shared across apps easily
+@normal.on("y")
+def yank_line(app, curr_line, x):
+	normal.clipboard = curr_line
+
+@normal.on("p")
+def paste(app, *args):
+	app.write(normal.clipboard)
+	
+@normal.on("I")
+def enter_insert(app, *args):
+	app.set_mode("insert")
+
+```
 
 ### \_\_init\_\_(_echo=True, running=True, insert=True, line\_length=120, out=sys.stdout, debug=False_)
 Constructs a Peacock object, and starts it running
@@ -17,6 +53,61 @@ Constructs a Peacock object, and starts it running
 | __line\_length__ | _int_  | How many characters should be allowed in each line
 | __out__ | _file_ |  What file descriptor to interact with. Shoul be a TTY or PTY that is connected to a terminal-emulator that supports ANSI control sequences
 | __debug__ | _bool_ |  Doesn't actually do anything
+
+## Mode Methods
+### add\_mode(_mode, name=None_)
+Adds the given mode to this app.
+
+| Parameter | Type | Purpose|
+|-----------|------|--------|
+ __mode__	  |_Mode_ | The mode to add
+ __name__   |_str_  | A name to assoicate to this mode (defaults to `mode.name`	
+ 
+### set\_mode(_name_)
+Activates the mode with the given name.
+
+| Parameter | Type | Purpose|
+|-----------|------|--------|
+ __name__   |_str_  | The name  of a `Mode` to set as the active mode for this app
+
+
+## Event Handler Methods
+
+### on(_key, mode="insert"_)
+Add "on-key" handlers to the given mode. Raises `ModeException` if 
+the specified mode has not been registered with the app. 
+Called with a key, (soon to support multi-key sequences), and 
+returns a decorator that consumes a function, and binds the original 
+key sequence to be handled by the given function in the given mode. 
+By default, the function will be called with: 
+
+* `Peacock` - a reference to the currently running app
+* `str` - the text of the line that the cursor is in
+* `int` - the current x position of the cursor in that line 
+
+E.g.:
+
+```python
+app = Peacock()
+@app.on("ctrl+x")
+def delete_to_beginning(app, cur_line, x):
+	# Deletes the text before the cursor when in insert mode 
+   app.delete(x)
+```   
+However, by subclassing `Mode` and overriding the `handle` method, 
+the key-handler function signatures can be arbitrarily customized
+            
+ Parameter | Type | Purpose
+-----------|------|--------
+ __key__ | _str_  | The key to bind behavior to.
+__mode__ | _str_  | The mode to add the key-handler to
+
+### handle(_key_)
+Executes whatever action is associated with the given key by dispatching it to the first mode in the mode tree that supports a handler. This can be used to trigger execution of a bound behavior, and collect a result if the bound method returns a vlaue.
+
+ Parameter | Type | Purpose
+-----------|------|--------
+ __key__ | _str_ | The key to trigger.
 
 ## IO Methods
 
@@ -39,34 +130,6 @@ Delete's `chars` characters from behind the current cursor position and moves al
 ### reset()
 Revert's the app, terminal and buffer back to its initial state.
 
-
-## Event Handler Methods
-
-### on(_key_)
-Add "on-key" handlers to this app. Called with a key, (soon to support multi-key sequences), and returns a decorator that consumes a function, and binds the original key sequence to be handled by the given function. The function will be called with: 
-
-* str - the text of the line that the cursor is in
-* int - the current x position of the cursor in that line 
-
-```python
-app = Peacock()
-@app.on("ctrl+x")
-def delete_to_beginning(cur_line, x):
-	# Deletes the text before the cursor 
-	app.delete(x)
-```
-
- Parameter | Type | Purpose
------------|------|--------
- __key__ | _str_  | The key to bind behavior to.
-
-### handle(_key_)
-Executes whatever action is associated with the given key. This can be used to trigger execution of a bound behavior, and collect a result if the bound method returns a vlaue.
-
- Parameter | Type | Purpose
------------|------|--------
- __key__ | _str_ | The key to trigger.
- 
 ## Cursor Methods
 
 ### save_cursor()
@@ -112,3 +175,61 @@ Moves the cursor to the beginning of the line of the line that is `rows` displac
 
 ### stop()
 Stops the app from running and clears out terminal text.
+
+##_class_ Mode
+`Modes` are what key-handlers are attached to in a `Peacock` application.
+A mode is simply an object which can have key-handlers attached to it,
+and has the ability to dispatch a call to one of those handlers, with 
+whatever arguments the developer chooses (the default is a reference 
+to the calling Peacock applications, the current cursor line, and the 
+x-position of the cursor in that line). A single Peacock application 
+can have many modes. Users of applications like Vim will be familiar 
+with the concept of moded applications.
+
+### \_\_init\_\_(_name, keyboard, handlers=None, parent=None_)
+
+Modes are created with a name, and a keyboard reference, so that it
+can determine what keys are valid. Optionally, pre-defined handlers
+can be added to the mode. 
+
+Also optionally, apps can have a parent.
+In the Peacock event-loop, if the current app does not have a key
+handler for a pressed key, the parent field will be searched 
+recursively until a handler or the root is found. This can be used
+to allow intimately related modes.
+
+NOTE: Modes do NOT have a reference to a Peacock app. This allows
+modes to be easily shared (as well as tested).
+
+Parameter | Type | Purpose
+-----------|------|--------
+__name__ | _str_  | the name that apps will use to refer to this mode
+__keyboard__ | _Keyboard_ | a Keyboard subclass that will be used to determine if key-sequences are valid
+__handlers__ | _dict_ | default key handlers to add to this app (_str -> ((Peacock, *args) -> Any)_
+__parent__ | _Mode_ | The mode that should be treated as this mode's parent. Whenever there is a miss for a key handler in this app, the parents will be searched
+
+### on(_key_)
+Add "on-key" handlers to this mode. Called with a key, (soon to support multi-key sequences), and returns a decorator that consumes a function, and binds the original key sequence to be handled by the given function. The function will be called with:
+
+* Peacock - the currently running app
+* str - the text of the line that the cursor is in
+* int - the current x position of the cursor in that line 
+
+However, by overriding the [handle](### handle) method, this function signature can be customized.
+
+Parameter | Type | Purpose
+-----------|------|--------
+__key__ | _str_  | The key to bind behavior to.
+
+### handle(_key, app_)
+Executes whatever action is associated with the given key
+In the event loop, the handlers dictionary is already checked for
+the given key, so when subclassing, you do not need to include a test for membership.
+
+__NOTE__: If you wish to customize the function signature for your key
+handlers, this is the method to override.
+
+ Parameter | Type | Purpose
+-----------|------|--------
+ __key__ | _str_ | The key to trigger.
+__app__ | _Peacock_ | The current running app
