@@ -1,11 +1,11 @@
 from io import StringIO
 import sys
-from threading import Thread
+from threading import Thread, Event
 
 from .mode import Mode, ModeError
 from peacock.interact import MacKeyboard, InteractANSIMac
 
-class Peacock(Thread):
+class Peacock:
     """
         The Peacock object is the public interface to this framework, and
         has a Flask-esque interface. Once created, takes over writing and 
@@ -30,8 +30,6 @@ class Peacock(Thread):
         See the examples directory for more full-featured examples
     """
 
-    dir_to_cart = {'up': (-1,0), 'down': (1, 0), 
-                   'left': (0, -1), 'right': (0, 1)}
     
     def __init__(self, echo=True, running=True, insert=True, line_length=120,
                  out=sys.stdout, debug=False):
@@ -96,6 +94,8 @@ class Peacock(Thread):
         self.save_cursor = self.interact.save_cursor
 
         # Let's GOOOO
+        self.running = Event()
+        self.thread = Thread(target=self.event_loop, args=(self.running))
         self.start()
 
     def trailing_output(self):
@@ -112,13 +112,13 @@ class Peacock(Thread):
         after_cursor = '\n'.join(self._buffer[self._y:])
         return after_cursor[self._x:]
 
-    def run(self):
+    def event_loop(self, flag):
         """
             Main event loop of the app. On each loop, checks to see if it is
             still running, and then if there is a key queued, triggers the key
             handler for that key
         """
-        while self.running:
+        while not flag.is_set():
             key = self.keyboard.get_key_or_none()
             if key:
                 self.handle(key)
@@ -128,7 +128,7 @@ class Peacock(Thread):
             Stops the application from running on the next iteration of the 
             event loop, and kills the keyboard handler
         """
-        self.running = False
+        self.running.set()
         self.keyboard.stop()
 
     ############################################################################
@@ -175,59 +175,13 @@ class Peacock(Thread):
             if mode.handlers.get(key, None):
                 # Handlers is a dict of mapping:
                 #   str -> ((Peacock, str, int) -> None)
-                # Call the function with the current app, the current line's text, 
-                # and the x position in that line
+                # Call the function with the current app, the current line's 
+                # text and the x position in that line
                 return mode.handle(key, app=self)
             else:
                 # Else, escalate to the parent mode, if any, and recurse 
                 mode = mode.parent
-            # if there is no custom handler associated with the given key
-            # in any mode on this path to the root node, and echo is on, 
-            # write the key at the current cursor 
-            # position
-            if self.echo:
-                self.write(key)
-
-    def register_default_handlers(self):
-        """
-            Binds default behavior to the certain "special" keys. Specifically,
-            binds the arrow keys to move the cursor in the implied direciton,
-            the delete key to remove a character behind the cursor, and enter
-            to insert a newline a the cursor
-        """
-        # Insert Mode Handlers
-        def arrow_handler_factory(rows, cols):
-            """
-                Returns a function that moves the cursor the given coordinates  
-                :param rows: int - number of rows to move for the given direc
-                :param cols: int - number of cols to move for the given direc
-                :return: (str, int) -> None
-            """
-            def arrow_handler(app, *args):
-                app.interact.move_cursor(rows, cols)
-            return arrow_handler
-        
-        # For each of the directions and associated movement coordinates,
-        # use self.on(direc) to create a decorator that binds behavior to
-        # the given direc, and then use that decorator to bind
-        # the function which moves the given number for rows and cols 
-        for direc, (rows, cols) in self.dir_to_cart.items():
-            self.on(direc)(arrow_handler_factory(rows, cols))
-
-        @self.on("delete") 
-        def delete_handler(app, *args):
-            # On backspace, delete one character 
-            app.interact.delete(1)
-
-        @self.on("enter")
-        def enter_handler(app, *args):
-            # On enter, write a new line 
-            app.write("\n")
-
-        # Read Mode Handlers
-        for arrow in ("up", "down"):
-            self.on(arrow, mode="read")(lambda *args: None)
-
+    
     ############################################################################
     ############################  MODE METHODS   ###############################
     ############################################################################
@@ -283,6 +237,13 @@ class Peacock(Thread):
         """
         # TODO add optimization for delete_char
         self.interact.delete(chars)
+
+    def read(self, prompt):
+        self.mode = read = self.modes["read"]
+        reader = Thread(target=self.event_loop, args=(read.is_reading,))
+        reader.start()
+        reader.join()
+        return read
 
     def reset(self):
         """

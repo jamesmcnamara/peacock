@@ -1,5 +1,11 @@
+from io import StringIO
+from threading import Event
+
 
 class Mode:
+    dir_to_cart = {'up': (-1,0), 'down': (1, 0), 
+                   'left': (0, -1), 'right': (0, 1)}
+    
     """
         Modes are what key-handlers are attached to in a Peacock application.
         A mode is simply an object which can have key-handlers attached to it,
@@ -89,7 +95,71 @@ class Mode:
         # Call the function with the current app, the current line's text, 
         # and the x position in that line
         return self.handlers[key](app, app._buffer[app._y], app._x)
-       
+    
+    def register_default_handlers(self):
+        """
+            Binds default behavior to the certain "special" keys. Specifically,
+            binds the arrow keys to move the cursor in the implied direciton,
+            the delete key to remove a character behind the cursor, and enter
+            to insert a newline a the cursor
+        """
+        def arrow_handler_factory(rows, cols):
+            """
+                Returns a function that moves the cursor the given coordinates  
+                :param rows: int - number of rows to move for the given direc
+                :param cols: int - number of cols to move for the given direc
+                :return: (str, int) -> None
+            """
+            def arrow_handler(app, *args):
+                app.move_cursor(rows, cols)
+            return arrow_handler
+        
+        # For each of the directions and associated movement coordinates,
+        # use self.on(direc) to create a decorator that binds behavior to
+        # the given direc, and then use that decorator to bind
+        # the function which moves the given number for rows and cols 
+        for direc, (rows, cols) in self.dir_to_cart.items():
+            self.on(direc)(arrow_handler_factory(rows, cols))
+
+        @self.on("delete") 
+        def delete_handler(app, *args):
+            # On backspace, delete one character 
+            app.delete(1)
+
+        @self.on("enter")
+        def enter_handler(app, *args):
+            # On enter, write a new line 
+            app.write("\n")
+
+        # The default behavior for all standard keyboard keys is 
+        # to write the key at the current cursor position
+        non_letters = "`1234567890-=~!@#$%^&*()_+[]\\{}|;':\",./<>?"
+        alphabet = "abcdefghijklmnopqrstuvwxyz"
+
+        for char in (non_letters + alphabet + alphabet.upper()):
+            @self.on(char)
+            def echo(app, *args):
+                if app.echo:
+                    app.write(char)
+
+
+
+class ReadMode(Mode):
+    def __init__(self, *args, **kwargs):
+        super.__init__(*args, **kwargs)
+        self._input = StringIO()
+        self.reading = Event()
+        
+    def register_default_handlers(self):
+        # Read Mode Handlers
+        for arrow in ("up", "down"):
+            self.on(arrow, mode="read")(lambda *args: None)
+
+        @self.on("enter")
+        def exit(*args):
+            self.reading.set()
+    
+
 class ModeError(Exception):
     pass
 
